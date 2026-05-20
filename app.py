@@ -26,15 +26,16 @@ with st.sidebar:
     st.info("PDF TO IMAGE by Far Famed KM")
     st.divider()
     
+    # AI 각개격파 가동을 위한 API Key 입력창
     api_key = st.text_input("Gemini API Key를 입력하세요", type="password")
     st.divider()
     
-    layout_option = st.radio("레이아웃 선택", ["1단 구성", "2단 구성"])
+    layout_option = st.radio("레이아웃 선택", ["1단 구성", "2단 구성"], index=1)
     numbering_option = st.radio("문항 번호 체계", ["오름차순형", "페이지+번호 혼합형"])
 
 # --- 3. 메인 화면 구성 ---
 st.markdown("<h1 class='title-text'>PTI-byFFKM</h1>", unsafe_allow_html=True)
-st.markdown("<p class='subtitle-text'>수학 학습 자료 자동화 커팅 시스템 (무료 고속 Flash 모드)</p>", unsafe_allow_html=True)
+st.markdown("<p class='subtitle-text'>수학 학습 자료 자동화 커팅 시스템 (교재용 AI 좌우 각개격파 모드)</p>", unsafe_allow_html=True)
 
 uploaded_file = st.file_uploader("PDF 파일을 업로드하세요", type="pdf")
 
@@ -43,11 +44,11 @@ if uploaded_file is not None:
     total_pages = len(pdf_document)
     st.success(f"총 {total_pages}페이지의 PDF가 성공적으로 로드되었습니다.")
     
-    # 1페이지 렌더링 (2배 확대하여 선명도 유지)
-    page = pdf_document.load_page(0)
-    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-    img_data = pix.tobytes("png")
-    base_img = Image.open(io.BytesIO(img_data))
+    # 1페이지 렌더링 (대표 미리보기용)
+    preview_page = pdf_document.load_page(0)
+    preview_pix = preview_page.get_pixmap(matrix=fitz.Matrix(2, 2))
+    preview_img_data = preview_pix.tobytes("png")
+    base_img = Image.open(io.BytesIO(preview_img_data))
     
     col1, col2 = st.columns(2)
     
@@ -56,106 +57,139 @@ if uploaded_file is not None:
         st.image(base_img, use_container_width=True)
         
     with col2:
-        st.subheader("AI 문항 자동 분할 및 다운로드")
+        st.subheader("참고서 맞춤형 AI 자동 컷팅 및 다운로드")
+        st.write(f"ℹ️ [각개격파 자르기] 버튼을 누르면 AI가 각 페이지의 좌/우 열을 분리하여 문항 수에 상관없이 정밀 추적합니다.")
         
         if not api_key:
-            st.warning("왼쪽 사이드바에 Gemini API Key를 입력하시면 자동 커팅을 시작할 수 있습니다.")
+            st.warning("👈 왼쪽 사이드바에 Gemini API Key를 입력하시면 초정밀 AI 각개격파 커팅을 시작할 수 있습니다.")
         else:
-            if st.button("✂️ 고속 자동 자르기 시작"):
-                with st.spinner("무료 고속 Flash 엔진이 수학 문제를 분석 중입니다..."):
-                    try:
-                        genai.configure(api_key=api_key)
+            if st.button("✂️ AI 좌우 각개격파 초정밀 분할 시작"):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                try:
+                    genai.configure(api_key=api_key)
+                    model = genai.GenerativeModel(model_name="gemini-2.5-flash")
+                    
+                    # 1단 세로 이미지 분석을 위한 정밀 최적화 프롬프트
+                    prompt = """
+                    이 이미지는 2단 구성 수학 교재에서 딱 하나의 열(Column)만 세로로 길쭉하게 잘라낸 이미지야.
+                    위에서부터 아래로 배정된 개별 수학 문제(문항 번호, 본문 지문, 수식, 그래프 조건, 보기 1~5번 전체 포함)의 영역들을 순서대로 모두 찾아줘.
+                    
+                    [필수 주의사항]
+                    수식의 분수식, 지수, 아래첨자나 보기가 단 1mm도 잘리지 않도록 사방 영역(특히 ymin과 ymax)을 아주 문맥상 넉넉하게 잡아야 해.
+                    
+                    반드시 아래와 같은 JSON 배열 형식으로만 응답해. 다른 텍스트는 절대 금지야.
+                    [ {"box_2d": [ymin, xmin, ymax, xmax], "label": "문제 번호"} ]
+                    좌표는 0에서 1000 사이로 정규화된 값이어야 해.
+                    """
+                    
+                    all_cropped_images = []
+                    global_question_count = 1
+                    
+                    # --- 🔄 비용 절감 및 테스트용 최대 5페이지 브레이크 장치 장착! ---
+                    run_pages = min(5, total_pages)
+                    
+                    for page_idx in range(run_pages):
+                        status_text.text(f"⏳ {page_idx + 1} / {run_pages} 페이지 AI 각개격파 분사 중...")
                         
-                        # 무료 플랜 한도가 넉넉한 gemini-2.5-flash 모델로 세팅
-                        model = genai.GenerativeModel(model_name="gemini-2.5-flash")
+                        page = pdf_document.load_page(page_idx)
+                        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                        page_img = Image.open(io.BytesIO(pix.tobytes("png")))
+                        width, height = page_img.size
                         
-                        # Flash 모델이 헷갈리지 않도록 좌표 지시 프롬프트를 극한으로 구체화
-                        prompt = """
-                        이 이미지는 좌우 2단(중앙 세로 구분선 존재)으로 구성된 시험지야.
-                        각 수학 문제(문항 번호, 본문 수식, 보기 전체)의 영역을 검출해줘.
+                        center_line = width // 2
                         
-                        [핵심 지시사항]
-                        1. 오른쪽 단에 있는 문제들의 왼쪽 시작점(xmin)을 너무 오른쪽 여백으로 잡지 말고, 
-                           세로 구분선 바로 우측의 문항 번호가 시작되는 지점부터 타이트하게 잡아줘.
-                        2. 문항 번호 가 잘리지 않게 상단 영역(ymin)도 여유있게 위로 올려서 잡아줘.
+                        # 수학적으로 좌/우 단면을 깔끔하게 크롭
+                        left_col_img = page_img.crop((0, 0, center_line, height))
+                        right_col_img = page_img.crop((center_line, 0, width, height))
                         
-                        반드시 아래와 같은 JSON 배열 형식으로만 응답해.
-                        [ {"box_2d": [ymin, xmin, ymax, xmax], "label": "문제 번호"} ]
-                        좌표는 0에서 1000 사이의 정규화 값이어야 해.
-                        """
+                        columns_data = [
+                            {"img": left_col_img, "type": "LEFT"},
+                            {"img": right_col_img, "type": "RIGHT"}
+                        ]
                         
-                        response = model.generate_content([prompt, base_img], generation_config={"response_mime_type": "application/json"})
-                        result_json = json.loads(response.text)
-                        
-                        width, height = base_img.size
-                        cropped_images = []
-                        
-                        # 검증용 도화지
-                        draw_img = base_img.copy()
-                        draw = ImageDraw.Draw(draw_img)
-                        
-                        # --- ✂️ 정밀 크롭 및 여백 대폭 확장(Padding 25) ---
-                        for idx, item in enumerate(result_json):
-                            box = item["box_2d"]
-                            label = item.get("label", f"{idx+1}")
-                            clean_label = "".join(filter(str.isdigit, label))
-                            if not clean_label:
-                                clean_label = str(idx + 1)
-                            
-                            ymin, xmin, ymax, xmax = box[0], box[1], box[2], box[3]
-                            
-                            abs_ymin = int((ymin / 1000) * height)
-                            abs_xmin = int((xmin / 1000) * width)
-                            abs_ymax = int((ymax / 1000) * height)
-                            abs_xmax = int((xmax / 1000) * width)
-                            
-                            # Flash의 미세한 오차를 커버하기 위해 사방 여백을 25픽셀로 듬뿍 제공!
-                            padding = 25
-                            left = max(0, abs_xmin - padding)
-                            top = max(0, abs_ymin - padding)
-                            right = min(width, abs_xmax + padding)
-                            bottom = min(height, abs_ymax + padding)
-                            
-                            # 1. 검증용 빨간 박스 그리기
-                            draw.rectangle([left, top, right, bottom], outline="red", width=4)
-                            draw.text((left + 5, top + 5), f"Q_{clean_label}", fill="red")
-                            
-                            # 2. 이미지 크롭
-                            cropped_img = base_img.crop((left, top, right, bottom))
-                            cropped_images.append({"img": cropped_img, "label": f"Q_{clean_label}"})
-                        
-                        cropped_images.sort(key=lambda x: x["label"])
-                        st.success(f"🎯 총 {len(cropped_images)}개의 문항 분리 완료! (무료 한도 모드)")
-                        
-                        # --- 📦 ZIP 압축파일 빌드 ---
-                        zip_buffer = io.BytesIO()
-                        with zipfile.ZipFile(zip_buffer, "w") as q_zip:
-                            for c_item in cropped_images:
-                                img_buf = io.BytesIO()
-                                c_item["img"].save(img_buf, format="PNG")
-                                q_zip.writestr(f"{c_item['label']}.png", img_buf.getvalue())
-                        
-                        # 다운로드 버튼
-                        st.download_button(
-                            label="📥 잘려진 문항 다운로드 (ZIP 파일 받기)",
-                            data=zip_buffer.getvalue(),
-                            file_name="KM_MATH_PTI_Flash_Version.zip",
-                            mime="application/zip",
-                            use_container_width=True
-                        )
-                        
-                        # 결과 시각화
-                        st.divider()
-                        st.write("### 📊 AI 탐지 영역 검증 (Flash 보정 버전)")
-                        st.image(draw_img, use_container_width=True)
-                        
-                        st.write("### 🔍 분할된 문항 개별 이미지 확인")
-                        for c_item in cropped_images:
-                            with st.container():
-                                st.markdown(f"<div class='crop-card'><strong>📝 문항 파일명: {c_item['label']}.png</strong></div>", unsafe_allow_html=True)
-                                st.image(c_item["img"], use_container_width=True)
+                        # 쪼개진 단면을 AI에게 하나씩 던져서 순수 세로 정렬 분석
+                        for col in columns_data:
+                            try:
+                                response = model.generate_content([prompt, col["img"]], generation_config={"response_mime_type": "application/json"})
+                                result_json = json.loads(response.text)
                                 
-                    except Exception as e:
-                        st.error(f"자동 컷팅 중 에러가 발생했습니다: {e}")
+                                # 상단 정렬순으로 1차 정렬
+                                result_json.sort(key=lambda x: x["box_2d"][0])
+                                
+                                for item in result_json:
+                                    box = item["box_2d"]
+                                    ymin, xmin, ymax, xmax = box[0], box[1], box[2], box[3]
+                                    
+                                    # 상대 좌표를 전체 원본 페이지 픽셀 좌표로 역환산
+                                    if col["type"] == "LEFT":
+                                        abs_ymin = int((ymin / 1000) * height)
+                                        abs_xmin = int((xmin / 1000) * center_line)
+                                        abs_ymax = int((ymax / 1000) * height)
+                                        abs_xmax = int((xmax / 1000) * center_line)
+                                    else:
+                                        abs_ymin = int((ymin / 1000) * height)
+                                        abs_xmin = int((xmin / 1000) * (width - center_line)) + center_line
+                                        abs_ymax = int((ymax / 1000) * height)
+                                        abs_xmax = int((xmax / 1000) * (width - center_line)) + center_line
+                                    
+                                    # 참고서용 안전 패딩 (여백 15픽셀 부여)
+                                    padding = 15
+                                    left = max(0, abs_xmin - padding)
+                                    top = max(0, abs_ymin - padding)
+                                    right = min(width, abs_xmax + padding)
+                                    bottom = min(height, abs_ymax + padding)
+                                    
+                                    cropped_img = page_img.crop((left, top, right, bottom))
+                                    all_cropped_images.append({
+                                        "img": cropped_img,
+                                        "label": f"Q_{global_question_count}",
+                                        "page": page_idx + 1
+                                    })
+                                    global_question_count += 1
+                                    
+                            except Exception as col_err:
+                                continue
                         
+                        progress_bar.progress((page_idx + 1) / run_pages)
+                    
+                    status_text.text("📦 초정밀 크롭 완료! 고해상도 ZIP 압축파일 빌드 중...")
+                    
+                    # --- ZIP 파일 빌드 ---
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, "w") as q_zip:
+                        for c_item in all_cropped_images:
+                            img_buf = io.BytesIO()
+                            c_item["img"].save(img_buf, format="PNG")
+                            q_zip.writestr(f"{c_item['label']}.png", img_buf.getvalue())
+                            
+                    progress_bar.empty()
+                    status_text.empty()
+                    st.success(f"🎯 초정밀 각개격파 성공! 최대 {run_pages}페이지에서 {len(all_cropped_images)}개의 문항을 추출했습니다!")
+                    
+                    st.download_button(
+                        label=f"📥 참고서 문항 전체 다운로드 (총 {len(all_cropped_images)}개 완성)",
+                        data=zip_buffer.getvalue(),
+                        file_name="KM_MATH_Handbook_Perfect_Cropped.zip",
+                        mime="application/zip",
+                        use_container_width=True
+                    )
+                    
+                    st.divider()
+                    st.write("### 🔍 AI 각개격파 추출 결과물 확인 (처음 8개 검증본)")
+                    
+                    preview_limit = min(8, len(all_cropped_images))
+                    for i in range(preview_limit):
+                        c_item = all_cropped_images[i]
+                        with st.container():
+                            st.markdown(f"<div class='crop-card'><strong>📝 [참고서 {c_item['page']}페이지] 파일명: {c_item['label']}.png</strong></div>", unsafe_allow_html=True)
+                            st.image(c_item["img"], use_container_width=True)
+                            
+                    if len(all_cropped_images) > 8:
+                        st.info(f"💡 전체 {len(all_cropped_images)}개 문항 중 처음 8개만 화면에 프리뷰를 표시했습니다.")
+                        
+                except Exception as e:
+                    st.error(f"각개격파 가동 중 에러가 발생했습니다: {e}")
+                    
     pdf_document.close()
